@@ -867,6 +867,7 @@ public class HookEntry implements IXposedHookLoadPackage {
             {"opencode", "https://opencode.ai/zen/go/v1", "deepseek-v4.1-flash"},
             {"commandcode", "https://api.commandcode.ai/provider/v1", "deepseek/deepseek-v4.1-flash-fast"},
             {"\u706b\u9505", "https://tokenfreevip.cc.cd/v1", "deepseek-v4.1-flash"},
+            {"\u706b\u9505 gpt", "https://tokenfreevip.cc.cd/v1", "gpt-6.1-sol"},
     };
 
     /**

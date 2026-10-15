@@ -10,8 +10,8 @@ android {
         applicationId = "com.next.bypass"
         minSdk = 28
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.10"
+        versionCode = 13
+        versionName = "1.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
