@@ -818,18 +818,30 @@ public class HookEntry implements IXposedHookLoadPackage {
     private void hookCustomProviderDropdown() {
         try {
             final Class<?> q3 = XposedHelpers.findClass("com.oplus.claw.settings.q3", cl);
+
+            // Hook the static initializer: findAndHookMethod cannot resolve
+            // "<clinit>" via exact lookup ("NoSuchMethodError ... #exact"), so
+            // scan the declared methods instead.
+            boolean clinitHooked = false;
             try {
-                XposedHelpers.findAndHookMethod(q3, "<clinit>", new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        ensureCustomProviderItem(q3);
+                for (java.lang.reflect.Method m : q3.getDeclaredMethods()) {
+                    if ("<clinit>".equals(m.getName())) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                ensureCustomProviderItem(q3);
+                            }
+                        });
+                        clinitHooked = true;
+                        break;
                     }
-                });
+                }
             } catch (Throwable e) {
-                XposedBridge.log(TAG + ": q3 <clinit> hook failed — " + e);
+                XposedBridge.log(TAG + ": q3 <clinit> scan hook failed — " + e);
             }
+
+            // Belt and braces: also repair on each dropdown-list access.
             try {
-                // Belt and braces: also repair on each dropdown-list access.
                 XposedHelpers.findAndHookMethod(q3, "b", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
@@ -839,7 +851,12 @@ public class HookEntry implements IXposedHookLoadPackage {
             } catch (Throwable e) {
                 XposedBridge.log(TAG + ": q3.b hook failed — " + e);
             }
-            XposedBridge.log(TAG + ": custom-provider dropdown hook — OK");
+
+            // Patch right away too: reading a static field forces the class to
+            // initialise, so the append happens before any UI reads the list.
+            ensureCustomProviderItem(q3);
+
+            XposedBridge.log(TAG + ": custom-provider dropdown hook — OK (clinit=" + clinitHooked + ")");
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": custom-provider dropdown hook failed — " + e);
         }
