@@ -83,6 +83,7 @@ public class HookEntry implements IXposedHookLoadPackage {
         hookCachedDecision();
         hookCachedDecisionNew();
         hookHydrateLog();
+        hookCustomProviderDropdown();
     }
 
     /**
@@ -803,6 +804,60 @@ public class HookEntry implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + ": hydrate-log hook — OK");
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": hydrate-log hook failed — " + e);
+        }
+    }
+
+    // ==================== Custom provider (self-hosted / OpenAI-compatible) ====================
+
+    /**
+     * The app ships a hidden "custom" provider preset (q3.b: id="custom",
+     * label="自定义", empty baseUrl so any OpenAI-compatible endpoint can be
+     * entered) but keeps it out of the dropdown list q3.a. Append it once the
+     * list is initialised so the model editor offers the option.
+     */
+    private void hookCustomProviderDropdown() {
+        try {
+            final Class<?> q3 = XposedHelpers.findClass("com.oplus.claw.settings.q3", cl);
+            try {
+                XposedHelpers.findAndHookMethod(q3, "<clinit>", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        ensureCustomProviderItem(q3);
+                    }
+                });
+            } catch (Throwable e) {
+                XposedBridge.log(TAG + ": q3 <clinit> hook failed — " + e);
+            }
+            try {
+                // Belt and braces: also repair on each dropdown-list access.
+                XposedHelpers.findAndHookMethod(q3, "b", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        ensureCustomProviderItem(q3);
+                    }
+                });
+            } catch (Throwable e) {
+                XposedBridge.log(TAG + ": q3.b hook failed — " + e);
+            }
+            XposedBridge.log(TAG + ": custom-provider dropdown hook — OK");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + ": custom-provider dropdown hook failed — " + e);
+        }
+    }
+
+    /** Append the hidden "自定义" preset (q3.b) to the dropdown list (q3.a) once. */
+    private void ensureCustomProviderItem(Class<?> q3) {
+        try {
+            Object custom = XposedHelpers.getStaticObjectField(q3, "b");
+            Object listObj = XposedHelpers.getStaticObjectField(q3, "a");
+            if (custom == null || !(listObj instanceof java.util.List)) return;
+            java.util.List<Object> list = new java.util.ArrayList<>((java.util.List<?>) listObj);
+            if (list.contains(custom)) return;
+            list.add(custom);
+            XposedHelpers.setStaticObjectField(q3, "a", list);
+            XposedBridge.log(TAG + ": 自定义 provider appended (dropdown now " + list.size() + " items)");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + ": ensureCustomProviderItem failed — " + e);
         }
     }
 
