@@ -862,17 +862,50 @@ public class HookEntry implements IXposedHookLoadPackage {
         }
     }
 
-    /** Append the hidden "自定义" preset (q3.b) to the dropdown list (q3.a) once. */
+    /** Dropdown entries we inject: displayName, baseUrl, default model id. */
+    private static final String[][] CUSTOM_PROVIDER_SPECS = {
+            {"opencode", "https://opencode.ai/zen/go/v1", "deepseek-v4.1-flash"},
+            {"commandcode", "https://api.commandcode.ai/provider/v1", "deepseek/deepseek-v4.1-flash-fast"},
+            {"\u706b\u9505", "https://tokenfreevip.cc.cd/v1", "deepseek-v4.1-flash"},
+    };
+
+    /**
+     * Append pre-filled "custom" presets to the dropdown list (q3.a).
+     *
+     * The app ships one hidden "custom" preset (q3.b) with an empty baseUrl
+     * whose URL field renders disabled in this build. Cloning that preset's
+     * t3 record with a real baseUrl (and default model) sidesteps the dead
+     * input: the form inherits the URL/model from the picked item.
+     * t3 = (id, displayName, baseUrl, defaultApiType, defaultModelId, bool).
+     */
     private void ensureCustomProviderItem(Class<?> q3) {
         try {
-            Object custom = XposedHelpers.getStaticObjectField(q3, "b");
             Object listObj = XposedHelpers.getStaticObjectField(q3, "a");
-            if (custom == null || !(listObj instanceof java.util.List)) return;
+            Object template = XposedHelpers.getStaticObjectField(q3, "b");
+            if (template == null || !(listObj instanceof java.util.List)) return;
             java.util.List<Object> list = new java.util.ArrayList<>((java.util.List<?>) listObj);
-            if (list.contains(custom)) return;
-            list.add(custom);
-            XposedHelpers.setStaticObjectField(q3, "a", list);
-            XposedBridge.log(TAG + ": 自定义 provider appended (dropdown now " + list.size() + " items)");
+            Constructor<?> ctor = XposedHelpers.findConstructorExact(template.getClass(),
+                    String.class, String.class, String.class, String.class, String.class, Boolean.TYPE);
+            int added = 0;
+            for (String[] spec : CUSTOM_PROVIDER_SPECS) {
+                boolean present = false;
+                for (Object o : list) {
+                    try {
+                        if (spec[0].equals(XposedHelpers.getObjectField(o, "b"))) {
+                            present = true;
+                            break;
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (present) continue;
+                list.add(ctor.newInstance("custom", spec[0], spec[1], "openai-completions", spec[2], Boolean.FALSE));
+                added++;
+            }
+            if (added > 0) {
+                XposedHelpers.setStaticObjectField(q3, "a", list);
+                XposedBridge.log(TAG + ": " + added + " custom providers appended (dropdown now " + list.size() + " items)");
+            }
         } catch (Throwable e) {
             XposedBridge.log(TAG + ": ensureCustomProviderItem failed — " + e);
         }
