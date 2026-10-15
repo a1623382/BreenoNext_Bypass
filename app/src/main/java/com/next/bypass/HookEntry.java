@@ -2,6 +2,7 @@ package com.next.bypass;
 
 import android.content.Context;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicReference;
@@ -80,6 +81,8 @@ public class HookEntry implements IXposedHookLoadPackage {
         hookViewModelRootCheck();
         hookPrecheckBypass();
         hookCachedDecision();
+        hookCachedDecisionNew();
+        hookHydrateLog();
     }
 
     /**
@@ -728,6 +731,97 @@ public class HookEntry implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * Hook 8b: Cached Decision Bypass for the 170074+ multi-key layout.
+     *
+     * 170074 stores the decision across plain preference keys
+     * ("access_decision_allowed" & friends) and exposes two readers:
+     * c(Context) -> i2(long, String, String, boolean) and
+     * k(Context) -> t3(String, boolean, String, long, String, long).
+     * The gate hydration path (LlmAccessGate.b(Context)) reads the i2 holder and
+     * only marks the gate Granted when it is non-null and allowed, so replace
+     * both readers with synthetic allowed decisions.
+     */
+    private void hookCachedDecisionNew() {
+        if (r == null) return;
+
+        if (r.cacheReaderOwner != null && r.cacheReaderMethod != null && r.cacheReaderReturn != null) {
+            try {
+                final Class<?> retCls = XposedHelpers.findClass(r.cacheReaderReturn, cl);
+                final Constructor<?> ctor = findCtor(retCls, "JSSZ");
+                if (ctor != null) {
+                    XposedHelpers.findAndHookMethod(r.cacheReaderOwner, cl, r.cacheReaderMethod,
+                            Context.class, new XC_MethodReplacement() {
+                                @Override
+                                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                                    return ctor.newInstance(System.currentTimeMillis(), "bypass", "", Boolean.TRUE);
+                                }
+                            });
+                    XposedBridge.log(TAG + ": hookCachedDecision " + r.cacheReaderOwner + "."
+                            + r.cacheReaderMethod + "(Context) → allowed i2 — OK");
+                } else {
+                    XposedBridge.log(TAG + ": hookCachedDecision — i2 ctor not found in " + r.cacheReaderReturn);
+                }
+            } catch (Throwable e) {
+                XposedBridge.log(TAG + ": hookCachedDecision i2 error — " + e);
+            }
+        }
+
+        if (r.t3ReaderOwner != null && r.t3ReaderMethod != null && r.t3ReaderReturn != null) {
+            try {
+                final Class<?> retCls = XposedHelpers.findClass(r.t3ReaderReturn, cl);
+                final Constructor<?> ctor = findCtor(retCls, "SZSJSJ");
+                if (ctor != null) {
+                    XposedHelpers.findAndHookMethod(r.t3ReaderOwner, cl, r.t3ReaderMethod,
+                            Context.class, new XC_MethodReplacement() {
+                                @Override
+                                protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                                    return ctor.newInstance("bypass", Boolean.TRUE, "",
+                                            System.currentTimeMillis(), "", Long.valueOf(0L));
+                                }
+                            });
+                    XposedBridge.log(TAG + ": hookCachedDecision " + r.t3ReaderOwner + "."
+                            + r.t3ReaderMethod + "(Context) → allowed t3 — OK");
+                }
+            } catch (Throwable e) {
+                XposedBridge.log(TAG + ": hookCachedDecision t3 error — " + e);
+            }
+        }
+    }
+
+    /** Log-only probe of the gate hydration result (LlmAccessGate.b(Context)). */
+    private void hookHydrateLog() {
+        if (r == null || r.gate == null) return;
+        try {
+            Class<?> gateCls = XposedHelpers.findClass(fq(r.gate), cl);
+            XposedHelpers.findAndHookMethod(gateCls, "b", Context.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    XposedBridge.log(TAG + ": hydrate result = " + param.getResult());
+                }
+            });
+            XposedBridge.log(TAG + ": hydrate-log hook — OK");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + ": hydrate-log hook failed — " + e);
+        }
+    }
+
+    /** Find a constructor matching a compact type signature (J long / S String / Z boolean). */
+    private static Constructor<?> findCtor(Class<?> cls, String sig) {
+        for (Constructor<?> c : cls.getDeclaredConstructors()) {
+            Class<?>[] p = c.getParameterTypes();
+            StringBuilder sb = new StringBuilder();
+            for (Class<?> pc : p) {
+                if (pc == long.class) sb.append('J');
+                else if (pc == boolean.class) sb.append('Z');
+                else if (pc == String.class) sb.append('S');
+                else sb.append('?');
+            }
+            if (sb.toString().equals(sig)) return c;
+        }
+        return null;
+    }
+
     // ==================== Utility methods ====================
 
     private boolean classExists(String className) {
@@ -818,6 +912,13 @@ public class HookEntry implements IXposedHookLoadPackage {
         String idleField;
         String cachedDecision;
         String cachedDecisionAccessor;
+        // 170074+ multi-key decision readers
+        String cacheReaderOwner;
+        String cacheReaderMethod;
+        String cacheReaderReturn;
+        String t3ReaderOwner;
+        String t3ReaderMethod;
+        String t3ReaderReturn;
         Object[] betaVerifyParams;
     }
 }

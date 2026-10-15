@@ -74,6 +74,7 @@ final class DexKitResolver {
     private static final String S_IDLE = "Idle";
     private static final String S_PROBE_START = "access_onboarding step=probe_start source=";
     private static final String S_DECISION_CACHE = "access_dec" + "ision_duid";
+    private static final String S_DECISION_ALLOWED = "access_decision_allowed";
 
     private DexKitResolver() {}
 
@@ -123,6 +124,9 @@ final class DexKitResolver {
                 out.cachedDecision = decisionTypeOf(bridge, out.cachedDecisionAccessor);
             }
 
+            // --- 170074+ multi-key decision readers ---
+            findDecisionReaders(bridge, out);
+
             // Every one of these suspend functions is Kotlin, so the trailing
             // continuation parameter is the JVM base type.
             out.continuation = "kotlin.coroutines.jvm.internal.ContinuationImpl";
@@ -139,7 +143,9 @@ final class DexKitResolver {
                 + " root=" + out.rootCheck + "#" + out.rootCheckMethod
                 + " vm=" + out.viewModel
                 + " idle=" + out.idleState + "#" + out.idleField
-                + " cache=" + out.cachedDecisionAccessor + "->" + out.cachedDecision);
+                + " cache=" + out.cachedDecisionAccessor + "->" + out.cachedDecision
+                + " cache2=" + out.cacheReaderOwner + "#" + out.cacheReaderMethod + "->" + out.cacheReaderReturn
+                + " t3=" + out.t3ReaderOwner + "#" + out.t3ReaderMethod);
         return out;
     }
 
@@ -329,5 +335,68 @@ final class DexKitResolver {
             }
         }
         return false;
+    }
+
+    /**
+     * 170074+ multi-key decision readers.
+     *
+     * The decision is stored across plain preference keys ("access_decision_allowed"
+     * & friends) and exposed through two readers on the storage class:
+     * c(Context) -> i2(long, String, String, boolean) and
+     * k(Context) -> t3(String, boolean, String, long, String, long).
+     * Locate the non-anonymous class using the key literals, then match its
+     * (Context) methods against the two holder constructor shapes.
+     */
+    private static void findDecisionReaders(DexKitBridge bridge, HookEntry.Resolved out) {
+        ClassDataList classes = bridge.findClass(FindClass.create()
+                .matcher(ClassMatcher.create().usingStrings(
+                        Collections.singletonList(S_DECISION_ALLOWED))));
+        for (ClassData c : classes) {
+            String name = c.getName();
+            if (name == null || name.contains("$")) continue;
+            for (MethodData m : c.getMethods()) {
+                ClassDataList p = m.getParamTypes();
+                if (p.size() != 1 || !"android.content.Context".equals(p.get(0).getName())) continue;
+                String ret = m.getReturnTypeName();
+                if (ret == null || !ret.startsWith("com.oplus.claw.")) continue;
+                String shape = ctorShape(bridge, ret);
+                if ("JSSZ".equals(shape) && out.cacheReaderOwner == null) {
+                    out.cacheReaderOwner = name;
+                    out.cacheReaderMethod = m.getMethodName();
+                    out.cacheReaderReturn = ret;
+                } else if ("SZSJSJ".equals(shape) && out.t3ReaderOwner == null) {
+                    out.t3ReaderOwner = name;
+                    out.t3ReaderMethod = m.getMethodName();
+                    out.t3ReaderReturn = ret;
+                }
+            }
+        }
+    }
+
+    /**
+     * Compact constructor-shape marker for a decision holder class:
+     * i2 -&gt; "JSSZ" (long, String, String, boolean);
+     * t3 -&gt; "SZSJSJ" (String, boolean, String, long, String, long).
+     */
+    private static String ctorShape(DexKitBridge bridge, String className) {
+        ClassDataList list = bridge.findClass(FindClass.create()
+                .matcher(ClassMatcher.create().className(className)));
+        for (ClassData c : list) {
+            for (MethodData m : c.getMethods()) {
+                if (!"<init>".equals(m.getMethodName())) continue;
+                ClassDataList p = m.getParamTypes();
+                StringBuilder sb = new StringBuilder();
+                for (ClassData cd : p) {
+                    String t = cd.getName();
+                    if ("long".equals(t)) sb.append('J');
+                    else if ("boolean".equals(t)) sb.append('Z');
+                    else if ("java.lang.String".equals(t)) sb.append('S');
+                    else sb.append('?');
+                }
+                String s = sb.toString();
+                if ("JSSZ".equals(s) || "SZSJSJ".equals(s)) return s;
+            }
+        }
+        return null;
     }
 }
